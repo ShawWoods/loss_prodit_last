@@ -1,0 +1,53 @@
+import numpy as np
+import pandas as pd
+import win32com.client as win32
+from WindPy import *
+import warnings
+warnings.filterwarnings('ignore')
+# DATA
+# data0 = pd.read_excel(r"D:\Downloads\单只证券浮动盈亏比例-导出_20241128.xls", header = 2, dtype={'证券代码': str})
+data0 = pd.read_excel(r"D:\Downloads\持仓明细查询-导出_20241209_102532116.xls", header = 2, dtype={'证券代码': str})
+jjjl = pd.read_excel(r"C:\Users\SHAO Yifan\Desktop\日报邮件\jjjl.xlsx")
+# Cleaning
+data0 = data0.dropna(subset = '证券名称')
+# Processing
+data = pd.merge(data0, jjjl, left_on = '账户名称', right_on = '产品名称')
+
+loss = data[['日期', '账户名称', '投资经理', '证券代码', '证券名称', '交易市场', '证券类别',
+       '成本均价', '成本', '证券市值', '浮动盈亏', '浮动率','邮箱']]
+%run functions.ipynb
+loss['windcode'] = loss.apply(generate_windcode, axis=1)
+# loss = loss.copy()
+# loss['浮动盈亏率'] = loss['浮动盈亏率'].apply(lambda x: f"{x:.2%}")
+
+funds_codes = list(loss.loc[loss.证券类别 == '基金'].windcode.drop_duplicates())
+conbonds_codes = list(loss.loc[loss.证券类别 == '债券'].windcode.drop_duplicates())
+
+w.start()
+funds_type = w.wss(funds_codes, "fund_firstinvesttype", usedf = True)[1]
+conbonds_type = w.wss(conbonds_codes, "sec_type", usedf = True)[1]
+
+funds_type.columns = [['type']]
+conbonds_type.columns = [['type']]
+sec_type = pd.concat((funds_type,conbonds_type)).reset_index()
+sec_type.columns = ['windcode','type']
+
+loss2 = pd.merge(loss, sec_type, on='windcode', how = 'left')
+loss2.loc[loss2['证券类别'] == '股票', 'type'] = '股票'
+
+loss2['止损预警线'] = loss2['type'].apply(lambda x: -0.24 if x in ['股票', '股票型基金', '国际(QDII)基金'] 
+                                          else (-0.2 if x in ['混合型基金', '普通可转债'] 
+                                                else None))
+loss2['止损线'] = loss2['type'].apply(lambda x: -0.3 if x in ['股票', '股票型基金', '国际(QDII)基金'] 
+                                          else (-0.25 if x in ['混合型基金', '普通可转债'] 
+                                                else None))
+loss2['止盈预警线'] = 0.8
+loss2['止盈线'] = 1
+fin = loss2.dropna(subset = '止损预警线')
+fin = fin[['日期', '账户名称', '投资经理', 'windcode', '证券名称', 'type', '成本均价', '成本','证券市值', '浮动盈亏', '浮动率','止损预警线', '止盈预警线','止损线','止盈线', '邮箱',]]
+
+# pre-outputing
+alerts = fin.loc[(fin.浮动率<fin.止损预警线)|(fin.浮动率>fin.止盈预警线)]
+forbids = fin.loc[(fin.浮动率<fin.止损线)|(fin.浮动率>fin.止盈线)]
+
+alerts
